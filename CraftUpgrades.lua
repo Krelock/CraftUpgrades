@@ -53,7 +53,7 @@ local NOTHING = {}
 
 -- Blizzard's crafting page, its recipe list and the list's scroll box.
 local page, recipeList, blizzardList
-local collapsed = {} -- [categoryID] = true while collapsed (until logout, like Blizzard's)
+local collapsed -- [categoryID] = collapsed or not, saved per character where it differs from how it starts
 local dirty -- something changed while the list was hidden
 
 local craftedGear = {} -- [recipeID] = the gear it makes, or false
@@ -523,17 +523,18 @@ local function SortUpgrades(a, b)
 end
 
 -- This update's categories: [categoryID] = { name, uiOrder, altKey (nil for
--- yours), upgrades = { { recipeInfo, itemID } } }. The tables are reused.
+-- yours), startsClosed, upgrades = { { recipeInfo, itemID } } }. The tables
+-- are reused.
 local wanted = {}
 local categories = {}
 
-local function AddCategory(categoryID, name, uiOrder, altKey)
+local function AddCategory(categoryID, name, uiOrder, altKey, startsClosed)
     local category = categories[categoryID]
     if not category then
         category = { upgrades = {} }
         categories[categoryID] = category
     end
-    category.name, category.uiOrder, category.altKey = name, uiOrder, altKey
+    category.name, category.uiOrder, category.altKey, category.startsClosed = name, uiOrder, altKey, startsClosed
     wipe(category.upgrades)
     wanted[categoryID] = category
     return category
@@ -605,10 +606,11 @@ local function Collect(professionID)
         end
     end
     ReadCharacter(me)
-    CollectFor(me, PlayerKey(), AddCategory(ADDON_NAME, CATEGORY_NAME, -1))
+    CollectFor(me, PlayerKey(), AddCategory(ADDON_NAME, CATEGORY_NAME, -1, nil, false))
+    -- Your other characters' categories start collapsed, players' open.
     for _, key in ipairs(Alts()) do
         local who = Character(key)
-        CollectFor(who, key, AddCategory(ADDON_NAME .. ":" .. key, ALT_CATEGORY_NAME:format(who.name), 0, key))
+        CollectFor(who, key, AddCategory(ADDON_NAME .. ":" .. key, ALT_CATEGORY_NAME:format(who.name), 0, key, not who.other))
     end
 end
 
@@ -619,6 +621,17 @@ end
 local ourProvider -- Blizzard's list the categories are in
 local ourNodes = {} -- [categoryID] = node
 local ourRecipes = {} -- [categoryID] = its recipe IDs, to tell when they change
+
+-- Blizzard's header click toggles the node itself, so its state is read back.
+local function Remember(categoryID, node)
+    local closed = node:IsCollapsed() == true
+    if closed == categories[categoryID].startsClosed then closed = nil end
+    collapsed[categoryID] = closed
+end
+
+local function RememberAll()
+    for categoryID, node in pairs(ourNodes) do Remember(categoryID, node) end
+end
 
 local function UpgradeList(upgrades)
     local ids = {}
@@ -644,7 +657,9 @@ local function BuildCategory(dataProvider, categoryID, category)
         node:Insert({ recipeInfo = recipeInfo, order = 0, upgradeItemID = upgrade.itemID, upgradeFor = category.altKey })
     end
     node:Insert({ bottomPadding = true, order = 1 })
-    node:SetCollapsed(collapsed[categoryID] or false)
+    local closed = collapsed[categoryID]
+    if closed == nil then closed = category.startsClosed end
+    node:SetCollapsed(closed)
     node.parent, node.dataProvider = dataProvider:GetRootNode(), dataProvider
     for _, child in ipairs(node:GetNodes()) do child.dataProvider = dataProvider end
     return node
@@ -670,7 +685,7 @@ local function Update(dataProvider, categoryID, category)
     if recipes == ourRecipes[categoryID] then return end
     local node = ourNodes[categoryID]
     if node then
-        collapsed[categoryID] = node:IsCollapsed()
+        Remember(categoryID, node)
         -- Blizzard's selection would keep a removed row, and the old category with it.
         local selection = recipeList.selectionBehavior
         for _, child in ipairs(node:GetNodes()) do
@@ -697,7 +712,7 @@ local function Refresh()
     local dataProvider = blizzardList:GetDataProvider()
     if ourProvider ~= dataProvider then
         -- Blizzard built a new list, without the categories.
-        for categoryID, node in pairs(ourNodes) do collapsed[categoryID] = node:IsCollapsed() end
+        RememberAll()
         wipe(ourNodes)
         wipe(ourRecipes)
         ourProvider = dataProvider
@@ -802,6 +817,7 @@ events:RegisterEvent("SKILL_LINES_CHANGED")
 events:RegisterEvent("PLAYER_TALENT_UPDATE")
 events:RegisterEvent("TRAIT_CONFIG_UPDATED")
 events:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+events:RegisterEvent("PLAYER_LOGOUT") -- also on /reload, before the saved variables are written
 events:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then
@@ -827,6 +843,8 @@ events:SetScript("OnEvent", function(self, event, arg1, arg2)
             hidden = CraftUpgradesCharDB.hidden
             CraftUpgradesCharDB.hiddenForAlts = CraftUpgradesCharDB.hiddenForAlts or {}
             hiddenForAlts = CraftUpgradesCharDB.hiddenForAlts
+            CraftUpgradesCharDB.collapsed = CraftUpgradesCharDB.collapsed or {}
+            collapsed = CraftUpgradesCharDB.collapsed
             -- Another addon may have loaded the crafting window first.
             if C_AddOns.IsAddOnLoaded("Blizzard_Professions") then Setup() end
         elseif arg1 == "Blizzard_Professions" and db then
@@ -866,6 +884,8 @@ events:SetScript("OnEvent", function(self, event, arg1, arg2)
             C_Timer.After(0, RecordQueued)
         end
         QueueRefresh()
+    elseif event == "PLAYER_LOGOUT" then
+        RememberAll()
     else -- talents changed: the spec may too
         RecordCharacter()
         QueueRefresh()
