@@ -1,14 +1,18 @@
 -- Craft Upgrades' options, in the crafting page's Filter menu for professions
--- that make gear: three checkboxes, Stat Weights (a submenu like Blizzard's
--- Slots) and Upgrades for Friends. Also hides the Filter button's false reset X.
+-- that make gear: two checkboxes, Upgrades for Alts (which alt gets a
+-- category), Stat Weights (a submenu like Blizzard's Slots) and Upgrades for
+-- Friends. Also hides the Filter button's false reset X.
 
 local _, ns = ...
 
-local ipairs = ipairs
+local ipairs, pairs, sort = ipairs, pairs, table.sort
 
 local UNLEARNED_OPTION = "Show Unlearned Upgrades"
 local HIDE_OPTION = "Hide Selected Upgrades"
-local ALTS_OPTION = "Show Upgrades for Alts"
+local ALTS_OPTION = "Upgrades for Alts"
+local LAST_PLAYED_CHOICE = "Last Played (%s)"
+local ALL_ALTS_CHOICE = "All Alts"
+local NO_ALTS_CHOICE = "None"
 local STAT_WEIGHTS_OPTION = "Stat Weights (Beta)"
 local ITEM_LEVEL_CHOICE = "Item Level"
 local AUTOMATIC_CHOICE = "Automatic (%s)" -- the spec's role, or Item Level without a spec
@@ -27,6 +31,8 @@ local FullName, PlayerKey, OtherName = ns.FullName, ns.PlayerKey, ns.OtherName
 local Alts, Character = ns.Alts, ns.Character
 local AddableTarget, AddTarget, IsShowing = ns.AddableTarget, ns.AddTarget, ns.IsShowing
 local ToggleShowing, RemovePlayer = ns.ToggleShowing, ns.RemovePlayer
+local IsAlt, LastPlayed, AltChoice = ns.IsAlt, ns.LastPlayed, ns.AltChoice
+local LAST_PLAYED, ALL_ALTS, NO_ALTS = ns.LAST_PLAYED, ns.ALL_ALTS, ns.NO_ALTS
 
 local function IsShowingUnlearned()
     return ns.db.showUnlearned
@@ -46,13 +52,32 @@ local function ToggleHideSelected()
     Refresh()
 end
 
-local function IsShowingAlts()
-    return ns.db.showAlts
+local function IsPicked(choice)
+    return AltChoice() == choice
 end
 
-local function ToggleAlts()
-    ns.db.showAlts = not ns.db.showAlts
+local function PickAlts(choice)
+    ns.charDB.altChoice = choice
     Refresh()
+end
+
+-- Last Played, All Alts, None, then each alt by name.
+local function AddAltChoices(description)
+    local last = LastPlayed()
+    if last then
+        description:CreateRadio(LAST_PLAYED_CHOICE:format(ns.characters[last].name), IsPicked, PickAlts, LAST_PLAYED)
+    end
+    description:CreateRadio(ALL_ALTS_CHOICE, IsPicked, PickAlts, ALL_ALTS)
+    description:CreateRadio(NO_ALTS_CHOICE, IsPicked, PickAlts, NO_ALTS)
+    local keys = {}
+    for key, who in pairs(ns.characters) do
+        if IsAlt(key, who) then keys[#keys + 1] = key end
+    end
+    sort(keys)
+    if #keys > 0 then description:CreateDivider() end
+    for _, key in ipairs(keys) do
+        description:CreateRadio(ns.characters[key].name, IsPicked, PickAlts, key)
+    end
 end
 
 -- A choice is { character, role key or ITEM_LEVEL (nil: Automatic) }.
@@ -123,7 +148,7 @@ local function AddFilterOption(owner, rootDescription)
         rootDescription:CreateDivider()
         rootDescription:CreateCheckbox(UNLEARNED_OPTION, IsShowingUnlearned, ToggleUnlearned)
         rootDescription:CreateCheckbox(HIDE_OPTION, IsHidingSelected, ToggleHideSelected)
-        rootDescription:CreateCheckbox(ALTS_OPTION, IsShowingAlts, ToggleAlts)
+        AddAltChoices(rootDescription:CreateButton(ALTS_OPTION))
         local weights = rootDescription:CreateButton(STAT_WEIGHTS_OPTION)
         weights:CreateTitle(FullName())
         AddRoleChoices(weights, PlayerKey(), me)

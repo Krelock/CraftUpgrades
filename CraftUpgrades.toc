@@ -2,7 +2,7 @@
 ## Title: CraftUpgrades
 ## Notes: Adds an Upgrades category to the crafting window: the recipes that make gear better than what you're wearing.
 ## Author: Krelock
-## Version: 1.3.2
+## Version: 1.4.0
 ## SavedVariables: CraftUpgradesDB
 ## SavedVariablesPerCharacter: CraftUpgradesCharDB
 ## IconTexture: Interface\Icons\Trade_BlackSmithing

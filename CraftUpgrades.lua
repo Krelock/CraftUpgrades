@@ -1,6 +1,6 @@
 -- Craft Upgrades: an "Upgrades" category at the top of the crafting window's
--- recipe list, with the recipes that make gear better than what you wear. Your
--- other characters and the players you add get a category each too.
+-- recipe list, with the recipes that make gear better than what you wear. The
+-- alt picked in the Filter menu and the players you add get a category each too.
 --
 -- The categories are real categories of Blizzard's own list, put back in each
 -- time Blizzard builds it, so Blizzard draws, scrolls and clicks them.
@@ -34,7 +34,6 @@ local GEAR_TRIES = 30 -- seconds after a loading screen to wait for your gear
 local defaults = {
     showUnlearned = false, -- also list recipes you haven't learned
     hideSelected = true, -- leave out the upgrades you alt-clicked
-    showAlts = true, -- a category for each of your other characters
     showFriends = true, -- one for each player you added
     showTarget = true, -- one for your target while the crafting window is open
 }
@@ -44,7 +43,11 @@ local WEAPON_SKILLS, ARMOR_SKILLS, SPEC_ROLES = ns.WEAPON_SKILLS, ns.ARMOR_SKILL
 local NO_CASTER_GEAR, NO_MELEE_GEAR, ROLES, RANGED = ns.NO_CASTER_GEAR, ns.NO_MELEE_GEAR, ns.ROLES, ns.RANGED
 local CLASS_WEAPONS, CLASS_SHIELDS = ns.CLASS_WEAPONS, ns.CLASS_SHIELDS
 
-local db
+-- Which of your other characters get a category (saved per character; an
+-- alt's key picks that one alone).
+local LAST_PLAYED, ALL_ALTS, NO_ALTS = "last", "all", "none"
+
+local db, charDB
 local hidden -- [recipeID] = true for what you alt-clicked (per character)
 local hiddenForAlts -- [character] = { [recipeID] = true }, the same for the others' categories
 local characters -- ["Full Name-Realm"] = what that character wears (account-wide)
@@ -225,7 +228,7 @@ end
 local gearCame
 local function RecordCharacter(changed)
     if not characters then return true end
-    local record = { name = FullName(), realm = GetRealmName(), faction = UnitFactionGroup("player"),
+    local record = { name = FullName(), realm = GetRealmName(), faction = UnitFactionGroup("player"), seen = GetServerTime(),
         gear = {}, stats = {}, links = {}, weapons = KnownTypes(WEAPON_SKILLS), armor = KnownTypes(ARMOR_SKILLS) }
     if ReadCharacter(record) == 0 and not (changed and gearCame) then return false end
     gearCame = true
@@ -571,17 +574,51 @@ local function Character(key)
     return characters[key] or (guest and guest.key == key and guest) or nil
 end
 
--- Your other characters on your realm and faction (the ones you can mail) and
--- the players you added, each unless its option is off (everyone: either way),
--- then your target while that option is on.
+-- Your other characters on your realm and faction (the ones you can mail).
+local function IsAlt(key, who)
+    return not who.other and key ~= PlayerKey() and who.realm == GetRealmName() and who.faction == UnitFactionGroup("player")
+end
+
+-- The alt played last (records without a time count as oldest, then by name).
+local function LastPlayed()
+    local best, bestSeen
+    for key, who in pairs(characters) do
+        local seen = who.seen or 0
+        if IsAlt(key, who) and (not best or seen > bestSeen or seen == bestSeen and key < best) then
+            best, bestSeen = key, seen
+        end
+    end
+    return best
+end
+
+-- The Filter menu's pick. Without one: Last Played, or none if the alts
+-- option of older versions was turned off.
+local function AltChoice()
+    local picked = charDB.altChoice
+    if picked == LAST_PLAYED or picked == ALL_ALTS or picked == NO_ALTS
+        or picked and characters[picked] and IsAlt(picked, characters[picked]) then
+        return picked
+    end
+    return db.showAlts == false and NO_ALTS or LAST_PLAYED
+end
+
+-- The picked alt (or all of them) and the players you added while their
+-- option is on (everyone: all of both), then your target while that option is on.
 local alts = {}
 local function Alts(everyone)
     wipe(alts)
     local you, realm, faction = PlayerKey(), GetRealmName(), UnitFactionGroup("player")
+    local shown = AltChoice()
+    if shown == LAST_PLAYED then shown = LastPlayed() end
     for key, who in pairs(characters) do
-        if key ~= you and who.realm == realm and who.faction == faction
-            and (everyone or db[who.other and "showFriends" or "showAlts"]) then
-            alts[#alts + 1] = key
+        if key ~= you and who.realm == realm and who.faction == faction then
+            local wanted
+            if who.other then
+                wanted = db.showFriends
+            else
+                wanted = shown == ALL_ALTS or shown == key
+            end
+            if everyone or wanted then alts[#alts + 1] = key end
         end
     end
     local guest = ns.guest
@@ -806,6 +843,8 @@ ns.PlayerKey, ns.OtherName, ns.OtherKey = PlayerKey, OtherName, OtherKey
 ns.FindRole, ns.RoleFor, ns.Score = FindRole, RoleFor, Score
 ns.WeaponByLevel, ns.ReplacedScore, ns.TypeSkills = WeaponByLevel, ReplacedScore, TypeSkills
 ns.MakesGear, ns.HiddenList, ns.Character, ns.Alts = MakesGear, HiddenList, Character, Alts
+ns.IsAlt, ns.LastPlayed, ns.AltChoice = IsAlt, LastPlayed, AltChoice
+ns.LAST_PLAYED, ns.ALL_ALTS, ns.NO_ALTS = LAST_PLAYED, ALL_ALTS, NO_ALTS
 ns.Refresh, ns.QueueRefresh = Refresh, QueueRefresh
 
 events:RegisterEvent("ADDON_LOADED")
@@ -839,6 +878,8 @@ events:SetScript("OnEvent", function(self, event, arg1, arg2)
             ns.WatchPlayers()
             db.statWeights = db.statWeights or {} -- ["Full Name-Realm"] = the role picked
             CraftUpgradesCharDB = CraftUpgradesCharDB or {}
+            charDB = CraftUpgradesCharDB
+            ns.charDB = charDB
             CraftUpgradesCharDB.hidden = CraftUpgradesCharDB.hidden or {}
             hidden = CraftUpgradesCharDB.hidden
             CraftUpgradesCharDB.hiddenForAlts = CraftUpgradesCharDB.hiddenForAlts or {}
@@ -886,6 +927,8 @@ events:SetScript("OnEvent", function(self, event, arg1, arg2)
         QueueRefresh()
     elseif event == "PLAYER_LOGOUT" then
         RememberAll()
+        local mine = characters[PlayerKey()]
+        if mine then mine.seen = GetServerTime() end -- for Last Played
     else -- talents changed: the spec may too
         RecordCharacter()
         QueueRefresh()
