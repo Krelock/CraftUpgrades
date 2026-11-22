@@ -1,6 +1,7 @@
 -- Craft Upgrades' tables: where each kind of gear is worn, the armor each class
 -- wears, the skills behind weapon and armor types, the weapons and shields each
--- class can learn, and each class's roles with their stat weights.
+-- class can learn, and each class's roles with their stat weights. Also the
+-- class and spec numbers Pawn files its scales under.
 
 local _, ns = ...
 
@@ -92,11 +93,17 @@ local SPEC_ROLES = {
     DRUID = { "balance", "feral", "restoration" },
 }
 
+-- Pawn's numbers: class IDs, and spec numbers where they aren't the tree's
+-- place (Pawn's Druid has two Feral scales before Restoration).
+local CLASS_IDS = { WARRIOR = 1, PALADIN = 2, HUNTER = 3, ROGUE = 4, PRIEST = 5, SHAMAN = 7, MAGE = 8, WARLOCK = 9, DRUID = 11 }
+local PAWN_SPECS = { DRUID = { 1, 2, 4 } }
+
 -- Classes that pass on gear with only caster stats, or only melee stats.
 local NO_CASTER_GEAR = { WARRIOR = true, ROGUE = true }
 local NO_MELEE_GEAR = { MAGE = true, PRIEST = true, WARLOCK = true }
 
--- Weights per point of each stat, from Icy Veins' stat priorities for Forever.
+-- Weights per point of each stat, from Icy Veins' leveling stat priorities for
+-- Forever (Arms / Fury: where the two lists differ, between them).
 -- Hit, Crit, Haste and Expertise are per 1%, DPS per point of weapon damage per
 -- second. melee, ranged and spell: which kinds of Hit, Crit and attack power
 -- count. meleeDPS and rangedDPS: which weapons' damage counts.
@@ -106,23 +113,23 @@ local NO_MELEE_GEAR = { MAGE = true, PRIEST = true, WARLOCK = true }
 local ROLES = {
     WARRIOR = {
         { key = "arms", name = "Arms / Fury", melee = true, meleeDPS = true,
-            DPS = 3.5, Hit = 8, Crit = 6.5, Str = 0.5, Agi = 0.4, Sta = 0.3, AP = 0.25 },
+            DPS = 3.5, Hit = 8, Exp = 8, Crit = 5.75, Str = 0.575, Agi = 0.575, AP = 0.2875 },
         { key = "protection", name = "Protection", melee = true, meleeDPS = true,
-            DPS = 3.5, Hit = 8, Crit = 2, Str = 0.65, Agi = 0.5, Sta = 0.3, AP = 0.325, Armor = 0.04 },
+            DPS = 3.5, Hit = 8, Exp = 8, Crit = 5, Str = 0.65, Agi = 0.5, Sta = 0.4, AP = 0.325, Def = 0.3, Armor = 0.04 },
     },
     PALADIN = {
         { key = "holy", name = "Holy", spell = true,
             Crit = 5, Haste = 4, Int = 0.8, Spi = 0.3, Heal = 0.45, MP5 = 1.63 },
         { key = "protection", name = "Protection", melee = true, spell = true,
-            Hit = 8, Str = 0.15, Agi = 0.1, Sta = 0.65, Int = 0.2, AP = 0.075, SP = 0.85, Holy = 0.85, Def = 0.5, Armor = 0.04 },
+            Hit = 4, Str = 0.65, Agi = 0.1, Sta = 1, Int = 0.15, AP = 0.325, SP = 0.68, Holy = 0.68, Def = 0.3, Armor = 0.02 },
         { key = "retribution", name = "Retribution", melee = true, meleeDPS = true,
-            DPS = 3.5, Hit = 8, Exp = 8, Crit = 6.5, Str = 0.4, Agi = 0.2, Sta = 0.15, Int = 0.3, Spi = 0.1, AP = 0.2, SP = 0.43, Holy = 0.43 },
+            DPS = 3.5, Hit = 8, Exp = 8, Crit = 4, Str = 0.3, Agi = 0.2, Int = 0.5, AP = 0.15, SP = 0.55, Holy = 0.55 },
     },
     HUNTER = {
         { key = "marksmanship", name = "Beast Mastery / Marksmanship", ranged = true, rangedDPS = true,
             DPS = 3.5, Hit = 8, Crit = 5, Agi = 0.65, Sta = 0.2, Int = 0.4, Spi = 0.3, AP = 0.325 },
         { key = "survival", name = "Survival", melee = true, ranged = true, meleeDPS = true, rangedDPS = true,
-            DPS = 3.5, Hit = 8, Crit = 5, Str = 0.4, Agi = 0.65, Sta = 0.15, Int = 0.3, Spi = 0.2, AP = 0.325 },
+            DPS = 3.5, Crit = 6.5, Agi = 0.8, Sta = 0.3, Int = 0.5, Spi = 0.4, AP = 0.4 },
     },
     ROGUE = {
         { key = "combat", name = "Assassination / Combat", melee = true, meleeDPS = true,
@@ -134,39 +141,39 @@ local ROLES = {
         { key = "holy", name = "Holy / Discipline", spell = true,
             Crit = 4, Int = 0.5, Spi = 0.65, Heal = 0.45, MP5 = 2 },
         { key = "shadow", name = "Shadow", spell = true,
-            Hit = 6.5, Crit = 8, Sta = 0.4, Int = 0.5, SP = 0.85, Shadow = 0.85, MP5 = 0.75 },
+            Hit = 6.5, Crit = 8, Sta = 0.3, Int = 0.5, Spi = 0.4, SP = 0.85, Shadow = 0.85, MP5 = 0.5 },
     },
     SHAMAN = {
         { key = "elemental", name = "Elemental", spell = true,
             Hit = 6.5, Crit = 8, Sta = 0.2, Int = 0.5, Spi = 0.3, SP = 0.85, Nature = 0.85, MP5 = 1 },
         { key = "enhancement", name = "Enhancement", melee = true, meleeDPS = true,
-            DPS = 3.5, Hit = 8, Exp = 8, Crit = 6.5, Str = 0.5, Agi = 0.3, Sta = 0.1, Int = 0.4, Spi = 0.15, AP = 0.25, SP = 0.17 },
+            DPS = 3.5, Str = 0.65, Agi = 0.4, Sta = 0.3, Int = 0.8, Spi = 0.5, AP = 0.325 },
         { key = "restoration", name = "Restoration", spell = true,
             Crit = 8, Sta = 0.3, Int = 0.65, Spi = 0.5, Heal = 0.45, MP5 = 1 },
     },
     MAGE = {
         { key = "arcane", name = "Arcane", spell = true,
-            Hit = 10, Crit = 4, Sta = 0.3, Int = 0.5, Spi = 0.65, SP = 0.68, Arcane = 0.68, MP5 = 0.5 },
+            Crit = 5, Sta = 0.4, Int = 0.8, Spi = 0.65, SP = 0.85, Arcane = 0.85 },
         { key = "fire", name = "Fire", spell = true,
-            Hit = 10, Crit = 6.5, Sta = 0.3, Int = 0.4, Spi = 0.5, SP = 0.68, Fire = 0.68, MP5 = 0.5 },
+            Crit = 8, Sta = 0.4, Int = 0.65, Spi = 0.5, SP = 0.85, Fire = 0.85 },
         { key = "frost", name = "Frost", spell = true,
-            Hit = 10, Crit = 6.5, Str = 0.15, Agi = 0.2, Sta = 0.3, Int = 0.4, Spi = 0.5, SP = 0.68, Frost = 0.68 },
+            Hit = 10, Crit = 6.5, Sta = 0.3, Int = 0.4, Spi = 0.5, SP = 0.68, Frost = 0.68 },
     },
     WARLOCK = {
         { key = "affliction", name = "Affliction", spell = true,
-            Hit = 8, Crit = 6.5, Haste = 3, Sta = 0.2, Int = 0.5, Spi = 0.4, SP = 0.85, Shadow = 0.85 },
+            Hit = 4, Crit = 8, Sta = 0.5, Int = 0.5, Spi = 0.65, SP = 0.85, Shadow = 0.85 },
         { key = "demonology", name = "Demonology", spell = true,
-            Hit = 8, Crit = 5, Haste = 3, Sta = 0.2, Int = 0.65, Spi = 0.4, SP = 0.85, Shadow = 0.85 },
+            Hit = 6.5, Crit = 8, Sta = 0.5, Int = 0.5, Spi = 0.4, SP = 0.85, Shadow = 0.85 },
         { key = "destruction", name = "Destruction", spell = true,
-            Hit = 8, Crit = 5, Haste = 6.5, Sta = 0.2, Int = 0.3, Spi = 0.4, SP = 0.85, Shadow = 0.85 },
+            Hit = 8, Crit = 6.5, Sta = 0.5, Int = 0.5, Spi = 0.4, SP = 0.85, Shadow = 0.85 },
     },
     DRUID = {
         { key = "balance", name = "Balance", spell = true,
-            Crit = 4, Haste = 3, Int = 1, Spi = 0.65, SP = 0.68, Nature = 0.68, Arcane = 0.68, MP5 = 1.25 },
+            Crit = 6.5, Haste = 5, Int = 1, Spi = 0.4, SP = 0.68, Nature = 0.68, Arcane = 0.68, MP5 = 0.75 },
         { key = "feral", name = "Feral (Cat and Bear)", melee = true, meleeDPS = true,
-            DPS = 3.5, Hit = 8, Exp = 8, Crit = 6.5, Str = 0.5, Agi = 0.4, Sta = 0.3, Int = 0.15, Spi = 0.2, AP = 0.25, SP = 0.09 },
+            DPS = 3.5, Hit = 8, Exp = 8, Crit = 6.5, Str = 0.4, Agi = 0.5, Sta = 0.3, AP = 0.2 },
         { key = "restoration", name = "Restoration", spell = true,
-            Crit = 4, Haste = 3, Int = 1, Spi = 0.65, SP = 0.68, Heal = 0.36, MP5 = 1.25 },
+            Crit = 5, Haste = 4, Int = 0.65, Spi = 0.3, SP = 0.85, Heal = 0.36, MP5 = 0.5 },
     },
 }
 local RANGED = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true }
@@ -175,3 +182,4 @@ ns.SLOTS, ns.CLASS_ARMOR, ns.ARMOR_TYPES = SLOTS, CLASS_ARMOR, ARMOR_TYPES
 ns.WEAPON_SKILLS, ns.ARMOR_SKILLS, ns.SPEC_ROLES = WEAPON_SKILLS, ARMOR_SKILLS, SPEC_ROLES
 ns.CLASS_WEAPONS, ns.CLASS_SHIELDS = CLASS_WEAPONS, CLASS_SHIELDS
 ns.NO_CASTER_GEAR, ns.NO_MELEE_GEAR, ns.ROLES, ns.RANGED = NO_CASTER_GEAR, NO_MELEE_GEAR, ROLES, RANGED
+ns.CLASS_IDS, ns.PAWN_SPECS = CLASS_IDS, PAWN_SPECS

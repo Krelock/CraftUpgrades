@@ -42,6 +42,7 @@ local SLOTS, CLASS_ARMOR, ARMOR_TYPES = ns.SLOTS, ns.CLASS_ARMOR, ns.ARMOR_TYPES
 local WEAPON_SKILLS, ARMOR_SKILLS, SPEC_ROLES = ns.WEAPON_SKILLS, ns.ARMOR_SKILLS, ns.SPEC_ROLES
 local NO_CASTER_GEAR, NO_MELEE_GEAR, ROLES, RANGED = ns.NO_CASTER_GEAR, ns.NO_MELEE_GEAR, ns.ROLES, ns.RANGED
 local CLASS_WEAPONS, CLASS_SHIELDS = ns.CLASS_WEAPONS, ns.CLASS_SHIELDS
+local CLASS_IDS, PAWN_SPECS = ns.CLASS_IDS, ns.PAWN_SPECS
 
 -- Which of your other characters get a category (saved per character; an
 -- alt's key picks that one alone).
@@ -113,7 +114,8 @@ end
 ---------------------------------------------------------------------------
 -- Characters
 ---------------------------------------------------------------------------
--- A character's record: name, realm, faction, class, spec, level, dualWield,
+-- A character's record: name, realm, faction, class, spec (its role) and tree
+-- (the talent tree's place), level, dualWield,
 -- twoHand, gear = { [slot] = item level, 0 when empty }, stats and links by
 -- slot, and weapons and armor = { [subclassID] = true }, nil when the game
 -- listed none of those skills.
@@ -121,7 +123,8 @@ end
 local me = { gear = {}, stats = {}, links = {} } -- you, read again on each update
 local newLevel -- PLAYER_LEVEL_UP fires before UnitLevel changes
 
--- The talent tree with the most points (nil before any, or on a tie).
+-- The role of the talent tree with the most points and that tree's place (nil
+-- before any, or on a tie).
 local function ByOrder(a, b) return a.orderIndex < b.orderIndex end
 local function SpecRole(class)
     local configID = C_SpecializationInfo.GetCombatConfigIDForSpecGroup(C_SpecializationInfo.GetActiveSpecGroup())
@@ -144,13 +147,14 @@ local function SpecRole(class)
             tie = true
         end
     end
-    return not tie and best and SPEC_ROLES[class] and SPEC_ROLES[class][best] or nil
+    if tie or not best then return nil end
+    return SPEC_ROLES[class] and SPEC_ROLES[class][best], best
 end
 
 -- Returns how many items you wear, and asks for those not loaded yet.
 local function ReadCharacter(who)
     who.class = select(2, UnitClass("player"))
-    who.spec = SpecRole(who.class)
+    who.spec, who.tree = SpecRole(who.class)
     who.level = max(UnitLevel("player"), newLevel or 0)
     who.dualWield = CanDualWield()
     local gear, stats, worn = who.gear, who.stats, 0
@@ -296,10 +300,78 @@ local function FindRole(class, roleKey)
     end
 end
 
--- The role picked in the Filter menu, or the spec's (nil: item level).
+-- Pawn (another addon) keeps its scales account-wide, so they work for alts
+-- too. A Pawn scale is a role { pawn = scale name, name = what Pawn shows }.
+local PAWN = "pawn:" -- saved before the scale's name
+local pawnRoles = {}
+
+local function PawnReady()
+    return PawnIsInitialized == true and type(PawnCommon) == "table" and type(PawnCommon.Scales) == "table"
+        and type(PawnGetItemData) == "function" and type(PawnGetSingleValueFromItem) == "function"
+end
+
+-- Scales of providers Pawn no longer has are left over in its saves.
+local function PawnRole(name)
+    local scale = PawnReady() and PawnCommon.Scales[name]
+    if not scale or (scale.Provider and not scale.ProviderActive) then return nil end
+    local role = pawnRoles[name]
+    if not role then
+        role = { pawn = name, name = scale.LocalizedName or name }
+        pawnRoles[name] = role
+    end
+    return role
+end
+
+-- Pawn's scale for the character's talent tree.
+local function PawnSpecRole(who)
+    if not (who.tree and PawnReady()) then return nil end
+    local classID, specs = CLASS_IDS[who.class], PAWN_SPECS[who.class]
+    local specID = specs and specs[who.tree] or who.tree
+    for name, scale in pairs(PawnCommon.Scales) do
+        if scale.Provider and scale.ClassID == classID and scale.SpecID == specID then
+            local role = PawnRole(name)
+            if role then return role end
+        end
+    end
+end
+
+-- Pawn's scales for the character's class, and the ones made for no class.
+local function ByName(a, b) return a.name:lower() < b.name:lower() end
+local function PawnRoles(who)
+    local list = {}
+    if not PawnReady() then return list end
+    local classID = CLASS_IDS[who.class]
+    for name, scale in pairs(PawnCommon.Scales) do
+        local role = (scale.ClassID == nil or scale.ClassID == classID) and PawnRole(name)
+        if role then list[#list + 1] = role end
+    end
+    sort(list, ByName)
+    return list
+end
+
+-- Automatic: Pawn's scale for the spec, else the spec's role (nil: item level).
+local function AutomaticRole(who)
+    return PawnSpecRole(who) or FindRole(who.class, who.spec)
+end
+
+local function IsPawnChoice(chosen)
+    return type(chosen) == "string" and chosen:sub(1, #PAWN) == PAWN
+end
+
+-- A Pawn scale picked that's gone (or Pawn is) counts as Automatic.
+local function PawnChoiceGone(chosen)
+    return IsPawnChoice(chosen) and not PawnRole(chosen:sub(#PAWN + 1))
+end
+
+-- The role or Pawn scale picked in the Filter menu, else Automatic.
 local function RoleFor(key, who)
     local chosen = db.statWeights[key]
-    if chosen == nil then chosen = who.spec end
+    if IsPawnChoice(chosen) then
+        local role = PawnRole(chosen:sub(#PAWN + 1))
+        if role then return role end
+        chosen = nil
+    end
+    if chosen == nil then return AutomaticRole(who) end
     return FindRole(who.class, chosen)
 end
 
@@ -366,23 +438,53 @@ local function WeaponByLevel(role, classID, equipLoc)
     return classID == Enum.ItemClass.Weapon and (ranged and role.rangedDPS or not ranged and role.meleeDPS)
 end
 
+-- Pawn's value without enchants (a new piece comes without), as Pawn's own
+-- upgrade arrows compare. nil while the item loads.
+local function PawnScore(role, link)
+    local item = PawnGetItemData(link)
+    if not item then
+        if C_Item.IsItemDataCachedByID(link) then return 0 end -- nothing Pawn can score
+        LoadItem((GetItemInfoInstant(link)))
+        return nil
+    end
+    local value, unenchanted = PawnGetSingleValueFromItem(item, role.pawn)
+    return unenchanted or value or 0
+end
+
+local function ItemScore(role, link, equipLoc)
+    if role.pawn then return PawnScore(role, link) end
+    return Score(role, ItemStats(link), RANGED[equipLoc])
+end
+
+-- nil while unknown: loading, or (with Pawn) a record too old to have links.
 local function SlotScore(who, role, slot)
+    if role.pawn then
+        if slot == INVSLOT_OFFHAND and who.twoHand then slot = INVSLOT_MAINHAND end
+        local link = who.links and who.links[slot]
+        if link then return PawnScore(role, link) end
+        return (who.gear[slot] or 0) == 0 and 0 or nil
+    end
     local stats = who.stats and who.stats[slot]
     return stats and Score(role, stats, slot == INVSLOT_RANGED) or 0
 end
 
 -- ReplacedLevel by score, and that piece's item level: both hands for a
 -- two-hander (unless it replaces one), else the lower score, then the lower
--- item level.
+-- item level. nil when a score is unknown.
 local function ReplacedScore(who, role, equipLoc)
     if equipLoc == "INVTYPE_2HWEAPON" then
         local score = SlotScore(who, role, INVSLOT_MAINHAND)
-        return who.twoHand and score or score + SlotScore(who, role, INVSLOT_OFFHAND), ReplacedLevel(who, equipLoc)
+        if not who.twoHand then
+            local offHand = SlotScore(who, role, INVSLOT_OFFHAND)
+            score = score and offHand and score + offHand
+        end
+        return score, ReplacedLevel(who, equipLoc)
     end
     local lowest, level
     for _, slot in ipairs(SLOTS[equipLoc]) do
         if slot ~= INVSLOT_OFFHAND or equipLoc ~= "INVTYPE_WEAPON" or who.dualWield then
             local score = SlotScore(who, role, slot)
+            if score == nil then return nil end
             if not lowest or score < lowest or (score == lowest and who.gear[slot] < level) then
                 lowest, level = score, who.gear[slot]
             end
@@ -452,7 +554,8 @@ local function IsUpgrade(who, role, itemID)
     if info.minLevel > who.level then return false end
     local link, itemLevel, better = info.link, info.itemLevel, nil
     if role and not WeaponByLevel(role, classID, equipLoc) then
-        local score, worn, wornLevel = Score(role, ItemStats(link), RANGED[equipLoc]), ReplacedScore(who, role, equipLoc)
+        local score, worn, wornLevel = ItemScore(role, link, equipLoc), ReplacedScore(who, role, equipLoc)
+        if not (score and worn) then return nil end
         better = score > worn or (score == worn and itemLevel > wornLevel)
     else
         better = itemLevel > ReplacedLevel(who, equipLoc)
@@ -840,7 +943,8 @@ end
 ns.NOTHING, ns.me, ns.missing, ns.alts, ns.ourNodes = NOTHING, me, missing, alts, ourNodes
 ns.LoadItem, ns.ItemStats, ns.FullName = LoadItem, ItemStats, FullName
 ns.PlayerKey, ns.OtherName, ns.OtherKey = PlayerKey, OtherName, OtherKey
-ns.FindRole, ns.RoleFor, ns.Score = FindRole, RoleFor, Score
+ns.RoleFor, ns.ItemScore = RoleFor, ItemScore
+ns.AutomaticRole, ns.PawnRoles, ns.PawnChoiceGone, ns.PAWN = AutomaticRole, PawnRoles, PawnChoiceGone, PAWN
 ns.WeaponByLevel, ns.ReplacedScore, ns.TypeSkills = WeaponByLevel, ReplacedScore, TypeSkills
 ns.MakesGear, ns.HiddenList, ns.Character, ns.Alts = MakesGear, HiddenList, Character, Alts
 ns.IsAlt, ns.LastPlayed, ns.AltChoice = IsAlt, LastPlayed, AltChoice

@@ -14,9 +14,9 @@ local SCORE_LINE = "%s: %.1f (worn: %.1f)" -- role, score, and what it replaces
 local HIDE_HINT = "<Alt Left Click to Hide>"
 local SHOW_HINT = "<Alt Left Click to Show>"
 
-local SLOTS, RANGED, me, missing = ns.SLOTS, ns.RANGED, ns.me, ns.missing
+local SLOTS, me, missing = ns.SLOTS, ns.me, ns.missing
 local PlayerKey, Character, RoleFor = ns.PlayerKey, ns.Character, ns.RoleFor
-local Score, ItemStats, ReplacedScore = ns.Score, ns.ItemStats, ns.ReplacedScore
+local ItemScore, ReplacedScore = ns.ItemScore, ns.ReplacedScore
 local WeaponByLevel, TypeSkills = ns.WeaponByLevel, ns.TypeSkills
 local LoadItem, HiddenList = ns.LoadItem, ns.HiddenList
 
@@ -31,9 +31,10 @@ local function AddScoreLine(data)
     local role = who and RoleFor(key, who)
     local _, _, _, equipLoc, _, classID = GetItemInfoInstant(data.upgradeItemID)
     local link = role and not WeaponByLevel(role, classID, equipLoc) and select(2, GetItemInfo(data.upgradeItemID))
-    if link then
-        GameTooltip:AddLine(SCORE_LINE:format(role.name, Score(role, ItemStats(link), RANGED[equipLoc]),
-            (ReplacedScore(who, role, equipLoc))))
+    local score = link and ItemScore(role, link, equipLoc)
+    local worn = score and ReplacedScore(who, role, equipLoc)
+    if worn then
+        GameTooltip:AddLine(SCORE_LINE:format(role.name, score, worn))
     end
 end
 

@@ -15,7 +15,8 @@ local ALL_ALTS_CHOICE = "All Alts"
 local NO_ALTS_CHOICE = "None"
 local STAT_WEIGHTS_OPTION = "Stat Weights (Beta)"
 local ITEM_LEVEL_CHOICE = "Item Level"
-local AUTOMATIC_CHOICE = "Automatic (%s)" -- the spec's role, or Item Level without a spec
+local AUTOMATIC_CHOICE = "Automatic (%s)" -- the spec's Pawn scale or role, or Item Level without a spec
+local PAWN_TITLE = "Pawn"
 local PLAYERS_OPTION = "Upgrades for Friends (Beta)"
 local ADD_TARGET = "Add Target" -- grayed out while the target can't be added
 local ADD_TARGET_NAMED = "Add Target: %s"
@@ -26,7 +27,8 @@ local TARGET_OPTION = "Show Upgrades for Target"
 local ITEM_LEVEL = "itemLevel" -- saved for Item Level (nothing saved: Automatic)
 
 local ROLES, NOTHING, me, alts = ns.ROLES, ns.NOTHING, ns.me, ns.alts
-local Refresh, FindRole, MakesGear = ns.Refresh, ns.FindRole, ns.MakesGear
+local Refresh, MakesGear = ns.Refresh, ns.MakesGear
+local AutomaticRole, PawnRoles, PawnChoiceGone, PAWN = ns.AutomaticRole, ns.PawnRoles, ns.PawnChoiceGone, ns.PAWN
 local FullName, PlayerKey, OtherName = ns.FullName, ns.PlayerKey, ns.OtherName
 local Alts, Character = ns.Alts, ns.Character
 local AddableTarget, AddTarget, IsShowing = ns.AddableTarget, ns.AddTarget, ns.IsShowing
@@ -82,7 +84,9 @@ end
 
 -- A choice is { character, role key or ITEM_LEVEL (nil: Automatic) }.
 local function IsChosen(choice)
-    return ns.db.statWeights[choice[1]] == choice[2]
+    local saved = ns.db.statWeights[choice[1]]
+    if choice[2] == nil and saved ~= nil then return PawnChoiceGone(saved) end
+    return saved == choice[2]
 end
 
 local function Choose(choice)
@@ -90,13 +94,20 @@ local function Choose(choice)
     Refresh()
 end
 
--- Automatic, Item Level, then the class's roles.
+-- Automatic, Item Level, the class's roles, then Pawn's scales when Pawn is on.
 local function AddRoleChoices(description, key, who)
-    local spec = FindRole(who.class, who.spec)
-    description:CreateRadio(AUTOMATIC_CHOICE:format(spec and spec.name or ITEM_LEVEL_CHOICE), IsChosen, Choose, { key })
+    local automatic = AutomaticRole(who)
+    description:CreateRadio(AUTOMATIC_CHOICE:format(automatic and automatic.name or ITEM_LEVEL_CHOICE), IsChosen, Choose, { key })
     description:CreateRadio(ITEM_LEVEL_CHOICE, IsChosen, Choose, { key, ITEM_LEVEL })
     for _, role in ipairs(ROLES[who.class] or NOTHING) do
         description:CreateRadio(role.name, IsChosen, Choose, { key, role.key })
+    end
+    local scales = PawnRoles(who)
+    if #scales > 0 then
+        description:CreateTitle(PAWN_TITLE)
+        for _, role in ipairs(scales) do
+            description:CreateRadio(role.name, IsChosen, Choose, { key, PAWN .. role.pawn })
+        end
     end
 end
 
